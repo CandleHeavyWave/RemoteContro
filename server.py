@@ -195,7 +195,7 @@ class Server:
             })
 
     def stop_remote_control(self, data):
-        print(data)
+
         target_client = self.get_client(data["client_id"])
         if target_client:
             self.send_message(target_client["socket"], {
@@ -218,7 +218,6 @@ class Server:
             self.remote_control(data)
         elif data["mode"] == "stop_remote_control":
             self.stop_remote_control(data)
-
 
     def send_message(self, client_socket: socket.socket, message: Dict[str, Any]) -> None:
         client_socket.send(json.dumps(message).encode('utf-8'))

@@ -176,7 +176,6 @@ class Client:
             time.sleep(sleep_time)
 
     def init_remote_control(self, data):
-
         remote_control_threading = threading.Thread(target=self.remote_control, args=(data,), daemon=True).start()
         self.remote_control_list.append({"id": data["remote_control_id"], "remote_control_threading": remote_control_threading})
 

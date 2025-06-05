@@ -295,7 +295,6 @@ class RemoteControlUI(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.addWidget(self.img_label)
         self.setLayout(self.layout)
-
         self.original_pixmap_size = QSize()
         self.show()
         self.remote_control_id = info["remote_control_id"]
