@@ -27,68 +27,53 @@ class Server:
         self.logger = logging.getLogger(__name__)
 
     def start(self) -> None:
-        try:
-            self.socket.bind((self.host, self.port))
-            self.socket.listen()
-            self.logger.info(f"Server started on {self.host}:{self.port}")
+        self.socket.bind((self.host, self.port))
+        self.socket.listen()
+        self.logger.info(f"Server started on {self.host}:{self.port}")
 
-            threading.Thread(target=self.accept_clients, daemon=True).start()
+        threading.Thread(target=self.accept_clients, daemon=True).start()
 
-            while self.running:
-                time.sleep(0.1)
-        except Exception as e:
-            self.logger.error(f"Server error: {e}")
-            self.stop()
+        while self.running:
+            time.sleep(0.1)
 
     def accept_clients(self) -> None:
         while self.running:
-            try:
-                client_socket, addr = self.socket.accept()
-                client_id = self._create_task_id()
+            client_socket, addr = self.socket.accept()
+            client_id = self._create_task_id()
 
-                with self.lock:
-                    self.clients.append({
-                        "id": client_id,
-                        "socket": client_socket,
-                        "ip": addr[0],
-                        "port": addr[1],
-                        "time": time.strftime('%Y-%m-%d %H:%M:%S')
-                    })
+            with self.lock:
+                self.clients.append({
+                    "id": client_id,
+                    "socket": client_socket,
+                    "running": True,
+                    "ip": addr[0],
+                    "port": addr[1],
+                    "time": time.strftime('%Y-%m-%d %H:%M:%S')
+                })
 
-                threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_id),
-                    daemon=True
-                ).start()
-            except socket.error as e:
-                if self.running:
-                    self.logger.error(f"Error accepting client: {e}")
+            threading.Thread(
+                target=self.handle_client,
+                args=(client_socket, client_id),
+                daemon=True
+            ).start()
+
 
     def _create_task_id(self) -> str:
         return 'id_' + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 
     def handle_client(self, client_socket: socket.socket, client_id: str) -> None:
         buffer = ""
-        while self.running:
-            try:
-                data = client_socket.recv(1048576).decode('utf-8')
-                if not data:
+        client_info = self.get_client(client_id)
+        while self.running and client_info["running"]:
+            data = client_socket.recv(1048576).decode('utf-8')
+            buffer += data
+            while True:
+                try:
+                    msg, idx = json.JSONDecoder().raw_decode(buffer)
+                    self.handle_client_message(client_id, msg)
+                    buffer = buffer[idx:].lstrip()
+                except ValueError:
                     break
-
-                buffer += data
-                while True:
-                    try:
-                        msg, idx = json.JSONDecoder().raw_decode(buffer)
-                        print("receive_message：", msg)
-                        self.handle_client_message(client_id, msg)
-                        buffer = buffer[idx:].lstrip()
-                    except ValueError:
-                        break
-            except (socket.error, UnicodeDecodeError) as e:
-                self.logger.error(f"Client {client_id} error: {e}")
-                break
-
-        self.close_client(client_id)
 
     def remove_client_from_list(self, client_list: List[Dict[str, Any]], client_id: str) -> None:
         with self.lock:
@@ -99,16 +84,15 @@ class Server:
 
     def close_client(self, client_id: str) -> None:
         client = self.get_client(client_id)
-        if client:
-            try:
-                if "socket" in client:
-                    client["socket"].close()
-            except socket.error as e:
-                self.logger.error(f"Error closing client socket: {e}")
 
+        client["running"] = False
+        if client:
+            if "socket" in client:
+                client["socket"].close()
             self.remove_client_from_list(self.clients, client_id)
             self.remove_client_from_list(self.controlled_clients, client_id)
             self.remove_client_from_list(self.controll_clients, client_id)
+            self.broadcast_controlled_clients_list()
             self.logger.info(f"Client {client_id} disconnected")
 
     def init_client(self, client_id: str, data: Dict[str, Any]) -> None:
@@ -122,26 +106,25 @@ class Server:
             if data["client_mode"] == "control":
                 self.controll_clients.append(client_info)
                 self.logger.info(f"New control client: {client_info['ip']}:{client_info['port']} ({client_id})")
+                self.broadcast_controlled_clients_list()
+
             elif data["client_mode"] == "controlled":
                 self.controlled_clients.append(client_info)
                 self.logger.info(f"New controlled client: {client_info['ip']}:{client_info['port']} ({client_id})")
+                self.broadcast_controlled_clients_list()
 
-    def clients_list(self, client_id: str) -> None:
-        client = self.get_client(client_id)
-        if not client:
-            return
+    def broadcast_controlled_clients_list(self):
+            # Create a list of client data without socket objects
+        client_list = [
+            {key: value for key, value in client.items() if key != 'socket'}
+            for client in self.controlled_clients
+        ]
 
-        with self.lock:
-            controlled_clients = [
-                {k: v for k, v in c.items() if k != 'socket'}
-                for c in self.controlled_clients
-            ]
-
-        self.send_message(client["socket"], {
-            "mode": "client_list",
-            "data": controlled_clients
-        })
-
+        for c in self.controll_clients:
+            self.send_message(c["socket"], {
+                "mode": "update_controlled_client_list",
+                "list": client_list  # Send filtered list instead of raw self.controlled_clients
+            })
     def directory(self, data: Dict[str, Any], controll_client_id: str) -> None:
         target_client = self.get_client(data["param"]["client_id"])
         if target_client:
@@ -170,9 +153,7 @@ class Server:
         if target_client:
 
             while True:
-
                 if data["data"]["chunk"]:
-
                     message = {
                         "mode": "download",
                         "param": {
@@ -204,40 +185,43 @@ class Server:
             self.send_message(target_client["socket"], data)
 
     def remote_control(self, data):
-        try:
-            target_client = self.get_client(data["client_id"])
-            if target_client:
-                self.send_message(target_client["socket"], {
-                    "mode": "init_remote_control",
-                    "controll_client_id": data["controll_client_id"],
-                    "data": data["data"]
-                })
-        except Exception as e:
-            self.logger.error(f"Remote control error: {e}")
+        target_client = self.get_client(data["client_id"])
+        if target_client:
+            self.send_message(target_client["socket"], {
+                "mode": "init_remote_control",
+                "controll_client_id": data["controll_client_id"],
+                "remote_control_id": data["remote_control_id"],
+                "data": data["data"]
+            })
+
+    def stop_remote_control(self, data):
+        print(data)
+        target_client = self.get_client(data["client_id"])
+        if target_client:
+            self.send_message(target_client["socket"], {
+                "mode": "stop_remote_control",
+                "remote_control_id": data["remote_control_id"],
+            })
 
     def handle_client_message(self, client_id: str, data: Dict[str, Any]) -> None:
+        if data["mode"] == "init":
+            self.init_client(client_id, data)
+        elif data["mode"] == "close":
+            self.close_client(client_id)
+        elif data["mode"] == "directory":
+            self.directory(data, client_id)
+        elif data["mode"] == "return":
+            self.return_result(data)
+        elif data["mode"] == "init_download":
+            self.init_download(data, client_id)
+        elif data["mode"] == "init_remote_control":
+            self.remote_control(data)
+        elif data["mode"] == "stop_remote_control":
+            self.stop_remote_control(data)
 
-            if data["mode"] == "init":
-                self.init_client(client_id, data)
-            elif data["mode"] == "close":
-                self.close_client(client_id)
-            elif data["mode"] == "clients_list":
-                self.clients_list(client_id)
-            elif data["mode"] == "directory":
-                self.directory(data, client_id)
-            elif data["mode"] == "return":
-                self.return_result(data)
-            elif data["mode"] == "init_download":
-                self.init_download(data, client_id)
-            elif data["mode"] == "init_remote_control":
-                self.remote_control(data)
 
     def send_message(self, client_socket: socket.socket, message: Dict[str, Any]) -> None:
-        print("send：", message)
-        try:
-            client_socket.send(json.dumps(message).encode('utf-8'))
-        except (socket.error, json.JSONDecodeError) as e:
-            self.logger.error(f"Error sending message: {e}")
+        client_socket.send(json.dumps(message).encode('utf-8'))
 
     def get_client(self, client_id: str) -> Optional[Dict[str, Any]]:
         with self.lock:
@@ -248,19 +232,11 @@ class Server:
 
     def stop(self) -> None:
         self.running = False
-        try:
-            with self.lock:
-                for client in self.clients:
-                    try:
-                        client["socket"].close()
-                    except socket.error:
-                        pass
-                self.socket.close()
-        except Exception as e:
-            self.logger.error(f"Error during server shutdown: {e}")
-        finally:
-            self.logger.info("Server stopped")
-
+        with self.lock:
+            for client in self.clients:
+                client["socket"].close()
+            self.socket.close()
+        self.logger.info("Server stopped")
 
 if __name__ == "__main__":
     server = Server('0.0.0.0', 43234)
