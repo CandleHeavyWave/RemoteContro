@@ -207,6 +207,15 @@ class Control:
             }
         })
 
+    def run(self, params: Dict) -> None:
+        self.send_message({
+            "mode": "run",
+            "param": {
+                "client_id": params["client_id"],
+                "exe_path": params["exe_path"],
+            }
+        })
+
     def close(self) -> None:
         self.socket.close()
 
@@ -221,6 +230,7 @@ class Control:
         help_text = """
 Available commands:
   /client_list                  - List all controlled clients
+  /run -client_id=ID -exe_path=EXE_PATH - List all controlled clients
   /dir -client_id=ID -root=PATH - List directory contents
   /download -client_id=ID -file=SRC -output=DST - Download file
   /remote_control -client_id=ID -fps=FPS -definition=[360, 480, 720, 1080, 2k, 4k] -mouse=BOOL -recording=BOOL -output=PATH  - Remotely control a client
@@ -246,6 +256,9 @@ Available commands:
                     self._handle_download_command(params)
                 elif command == "/remote_control":
                     self._handle_remote_control_command(params)
+                elif command == "/run":
+                    self._handle_run_command(params)
+
                 elif command == "/help":
                     print(help_text)
                 else:
@@ -255,10 +268,31 @@ Available commands:
 
     def _parse_params(self, parts: List[str]) -> Dict[str, str]:
         params = {}
+        current_key = None
+        current_value = []
+
         for part in parts:
+            # 如果部分以 "-" 开头且包含 "=", 则表示新的键值对
             if part.startswith("-") and "=" in part:
+                if current_key is not None:
+                    # 保存之前的键值对
+                    value = ' '.join(current_value).strip('"')
+                    params[current_key] = value
+                    current_value = []
+
+                # 解析新的键值对
                 key, value = part[1:].split("=", 1)
-                params[key] = value
+                current_key = key
+                current_value.append(value)
+            else:
+                # 如果当前部分不是新的键值对，则继续添加到当前值中
+                current_value.append(part)
+
+        # 处理最后一个键值对
+        if current_key is not None:
+            value = ' '.join(current_value).strip('"')
+            params[current_key] = value
+
         return params
 
     def _handle_dir_command(self, params: Dict[str, str]) -> None:
@@ -280,6 +314,12 @@ Available commands:
             print("Error: Both -client_id parameters are required")
             return
         self.init_remote_control(params)
+
+    def _handle_run_command(self, params: Dict) -> None:
+        if "client_id" not in params:
+            print("Error: Both -client_id parameters are required")
+            return
+        self.run(params)
 
 class RemoteControlUI(QWidget):
     def __init__(self, info: Dict):

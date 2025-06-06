@@ -203,13 +203,25 @@ class Server:
                 "remote_control_id": data["remote_control_id"],
             })
 
+    def run(self, data):
+        target_client = self.get_client(data["param"]["client_id"])
+        if target_client:
+            self.send_message(target_client["socket"], {
+                "mode": "run",
+                "exe_path": data["param"]["exe_path"],
+            })
+
     def handle_client_message(self, client_id: str, data: Dict[str, Any]) -> None:
+
+        print(data)
         if data["mode"] == "init":
             self.init_client(client_id, data)
         elif data["mode"] == "close":
             self.close_client(client_id)
         elif data["mode"] == "directory":
             self.directory(data, client_id)
+        elif data["mode"] == "run":
+            self.run(data)
         elif data["mode"] == "return":
             self.return_result(data)
         elif data["mode"] == "init_download":
