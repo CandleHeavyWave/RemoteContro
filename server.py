@@ -113,17 +113,21 @@ class Server:
                 self.logger.info(f"New controlled client: {client_info['ip']}:{client_info['port']} ({client_id})")
                 self.broadcast_controlled_clients_list()
 
+    def broadcast_message(self, clients_list: list, message: Dict) -> None:
+        for c in clients_list:
+            self.send_message(c["socket"], message)
+
     def broadcast_controlled_clients_list(self):
         client_list = [
             {key: value for key, value in client.items() if key != 'socket'}
             for client in self.controlled_clients
         ]
 
-        for c in self.controll_clients:
-            self.send_message(c["socket"], {
+        self.broadcast_message(self.controll_clients, {
                 "mode": "update_controlled_client_list",
-                "list": client_list  # Send filtered list instead of raw self.controlled_clients
+                "list": client_list
             })
+
     def directory(self, data: Dict[str, Any], controll_client_id: str) -> None:
         target_client = self.get_client(data["data"]["client_id"])
         if target_client:
@@ -217,14 +221,31 @@ class Server:
         if target_client:
             self.send_message(target_client["socket"], {"mode": "kill_self"})
 
+    def update_server_ip(self, data: Dict[str, Any]) -> None:
+        self.broadcast_message(self.controll_clients,
+        {"mode": "update_server_ip",
+                "data": {
+                    "ips": data["data"]["ips"],
+                }
+            })
+
+    def back_heartbeat(self, client_id: str) -> None:
+        target_client = self.get_client(client_id)
+        if target_client:
+            self.send_message(target_client["socket"], {"mode": "back_heartbeat"})
+
     def handle_client_message(self, client_id: str, data: Dict[str, Any]) -> None:
 
         if data["mode"] == "init":
             self.init_client(client_id, data)
         elif data["mode"] == "close":
             self.close_client(client_id)
+        elif data["mode"] == "heartbeat":
+            self.back_heartbeat(client_id)
         elif data["mode"] == "kill_client":
             self.close_client(data["close"])
+        elif data["mode"] == "update_server_ip":
+            self.update_server_ip(data)
         elif data["mode"] == "directory":
             self.directory(data, client_id)
         elif data["mode"] == "run":
@@ -255,6 +276,7 @@ class Server:
                 client["socket"].close()
             self.socket.close()
         self.logger.info("Server stopped")
+
 
 if __name__ == "__main__":
     server = Server('0.0.0.0', 43234)

